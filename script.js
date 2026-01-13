@@ -1,8 +1,9 @@
 /******************************************************
- * ✅ WEBSITE DASHBOARD CONNECT API APPS SCRIPT
+ * ✅ FINAL SCRIPT.JS (ANTI CORS + ANTI REDIRECT)
+ * Works for GitHub Pages + Google Apps Script API
  ******************************************************/
 
-const API_URL = "https://script.google.com/macros/s/AKfycbz14z3-WC9lfUMzkxqTSxcsIdsWErFDRXGBxMMhQmKbWL_Yk8XBEwvRCp3iFRooLd32/exec"; // <-- WAJIB GANTI
+const API_URL = "https://script.google.com/macros/s/AKfycbz14z3-WC9lfUMzkxqTSxcsIdsWErFDRXGBxMMhQmKbWL_Yk8XBEwvRCp3iFRooLd32/exec";
 const AUTO_REFRESH_MS = 60000;
 
 let allRows = [];
@@ -69,6 +70,7 @@ function applyFilters() {
 
   return allRows.filter(r => {
     const t = new Date(r.tanggal);
+
     if (from && t < from) return false;
 
     if (to) {
@@ -79,6 +81,7 @@ function applyFilters() {
 
     if (sto && r.sto !== sto) return false;
     if (q && !String(r.teknisi || "").toLowerCase().includes(q)) return false;
+
     return true;
   });
 }
@@ -102,9 +105,7 @@ function renderTop(rows) {
     map[name] = (map[name] || 0) + (r.close_tiket || 0);
   });
 
-  const top = Object.entries(map)
-    .sort((a,b) => b[1] - a[1])
-    .slice(0, 10);
+  const top = Object.entries(map).sort((a,b) => b[1] - a[1]).slice(0, 10);
 
   const target = $("topList");
   if (top.length === 0) {
@@ -130,13 +131,11 @@ function renderChart(rows) {
     map[name] = (map[name] || 0) + (r.close_tiket || 0);
   });
 
-  const top = Object.entries(map).sort((a,b) => b[1]-a[1]).slice(0,10);
-
+  const top = Object.entries(map).sort((a,b) => b[1] - a[1]).slice(0,10);
   const labels = top.map(x => x[0]);
   const data = top.map(x => x[1]);
 
   const ctx = document.getElementById("chartClose");
-
   if (chart) chart.destroy();
 
   chart = new Chart(ctx, {
@@ -169,19 +168,14 @@ function openModal(row) {
       <div><b>STO:</b> ${row.sto || "-"}</div>
       <div><b>Total Tiket:</b> ${row.total_tiket || 0}</div>
       <hr style="border-color: rgba(255,255,255,.08); width:100%;" />
-
       <div><b>OPEN SQM REGULER:</b> ${row.open_sqm_reguler || 0}</div>
       <div><b>OPEN REGULER GOLD:</b> ${row.open_reguler_hvc_gold || 0}</div>
       <div><b>OPEN REGULER PLATINUM:</b> ${row.open_reguler_hvc_platinum || 0}</div>
-
       <hr style="border-color: rgba(255,255,255,.08); width:100%;" />
-
       <div><b>CLOSE SQM PROGRESS:</b> ${row.close_sqm_progress || 0}</div>
       <div><b>CLOSE SQM CLOSE:</b> ${row.close_sqm_close || 0}</div>
       <div><b>CLOSE REGULER PROGRESS:</b> ${row.close_reguler_progress || 0}</div>
-
       <hr style="border-color: rgba(255,255,255,.08); width:100%;" />
-
       <div><b>Close Ticket:</b> ${row.close_tiket || 0}</div>
     </div>
   `;
@@ -215,8 +209,7 @@ function renderTable(rows) {
 
   tb.querySelectorAll("button[data-i]").forEach(btn => {
     btn.addEventListener("click", () => {
-      const idx = Number(btn.dataset.i);
-      openModal(rows[idx]);
+      openModal(rows[Number(btn.dataset.i)]);
     });
   });
 }
@@ -228,7 +221,6 @@ function exportCSV(rows) {
     "close_sqm_progress","close_sqm_close","close_reguler_progress",
     "close_tiket"
   ];
-
   const lines = [header.join(",")];
 
   rows.forEach(r => {
@@ -243,39 +235,71 @@ function exportCSV(rows) {
 
   const blob = new Blob([lines.join("\n")], { type:"text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-
   const a = document.createElement("a");
   a.href = url;
   a.download = "performansi_teknisi.csv";
   a.click();
-
   URL.revokeObjectURL(url);
+}
+
+// ✅ 1) Normal fetch (kadang gagal karena redirect/cors)
+async function fetchJSON() {
+  const url = API_URL + (API_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+// ✅ 2) JSONP fallback (100% aman buat GitHub Pages)
+function fetchJSONP() {
+  return new Promise((resolve, reject) => {
+    const cb = "jsonp_cb_" + Date.now() + "_" + Math.floor(Math.random() * 9999);
+
+    window[cb] = (data) => {
+      delete window[cb];
+      script.remove();
+      resolve(data);
+    };
+
+    const script = document.createElement("script");
+    script.src = API_URL + (API_URL.includes("?") ? "&" : "?") + "callback=" + cb + "&t=" + Date.now();
+    script.onerror = () => {
+      delete window[cb];
+      script.remove();
+      reject(new Error("JSONP failed"));
+    };
+
+    document.body.appendChild(script);
+  });
 }
 
 async function fetchAPI() {
   try {
-    // anti cache
-    const url = API_URL + (API_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
-
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-
-    const data = await res.json();
-
+    // coba fetch biasa dulu
+    const data = await fetchJSON();
     allRows = data.rows || [];
     setApiBadge(true);
 
     fillSTOSelect(allRows);
     renderAll();
-  } catch (err) {
-    console.error("Fetch API error:", err);
-    setApiBadge(false);
+  } catch (err1) {
+    console.warn("Fetch normal gagal, mencoba JSONP...", err1);
+    try {
+      const data = await fetchJSONP();
+      allRows = data.rows || [];
+      setApiBadge(true);
+
+      fillSTOSelect(allRows);
+      renderAll();
+    } catch (err2) {
+      console.error("Fetch JSONP juga gagal:", err2);
+      setApiBadge(false);
+    }
   }
 }
 
 function renderAll() {
   const filtered = applyFilters();
-
   renderStats(filtered);
   renderTop(filtered);
   renderChart(filtered);
@@ -285,7 +309,6 @@ function renderAll() {
 function initEvents() {
   $("btnRefresh").addEventListener("click", fetchAPI);
   $("btnReload").addEventListener("click", () => location.reload());
-
   $("btnExport").addEventListener("click", () => exportCSV(applyFilters()));
 
   $("stoFilter").addEventListener("change", renderAll);
@@ -305,7 +328,6 @@ function boot() {
 
   initEvents();
   fetchAPI();
-
   setInterval(fetchAPI, AUTO_REFRESH_MS);
 }
 

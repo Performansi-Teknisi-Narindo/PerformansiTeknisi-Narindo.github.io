@@ -3,7 +3,7 @@
   --panel:#0b1220;
   --card:#0f1930;
   --border:rgba(255,255,255,.08);
-  --text:#eaf0ff;
+  --text:#ffffff;
   --muted:rgba(234,240,255,.65);
   --shadow:0 20px 60px rgba(0,0,0,.45);
   --radius:18px;
@@ -290,7 +290,7 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
   width:min(720px, 100%);
   border-radius:22px;
   border:1px solid var(--border);
-  background:linear-gradient(180deg, rgb(78, 250, 92), rgba(66, 57, 57, 0.02));
+  background:linear-gradient(180deg, rgb(78, 250, 92), rgb(0, 0, 0));
   padding:16px;
   box-shadow:var(--shadow);
 }

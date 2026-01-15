@@ -2,173 +2,393 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard Performansi Teknisi</title>
-
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Performansi Teknisi - PRO MAX</title>
   <link rel="stylesheet" href="style.css" />
-
-  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
-  <aside class="sidebar">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="logo">📊</div>
-      <div class="brand-text">
-        <div class="brand-title">Dashboard</div>
-        <div class="brand-sub">Performansi Teknisi</div>
+      <div class="logo">TA</div>
+      <div>
+        <div class="brand-title">Performansi</div>
+        <div class="brand-sub">Enterprise Monitoring<br/>Realtime Google Sheet</div>
       </div>
     </div>
 
+    <div class="search">
+      <input id="searchInput" placeholder="Search STO / teknisi / tiket..." />
+    </div>
+
     <nav class="menu">
-      <button class="menu-btn active">📌 Dashboard</button>
-      <button class="menu-btn" id="btnReload">🔄 Reload</button>
+      <button class="menu-item active" data-tab="dashboard">Dashboard</button>
+      <button class="menu-item" data-tab="tickets">Tickets</button>
+      <button class="menu-item" data-tab="teams">Teams</button>
+      <button class="menu-item" data-tab="teknisi">Teknisi Detail</button>
+      <button class="menu-item" data-tab="reports">Reports</button>
+      <button class="menu-item" data-tab="admin">Admin Panel</button>
     </nav>
 
-    <div class="sidebar-footer">
-      <div class="hint">
-        <span class="hint-dot"></span>
-        <div>
-          <div class="hint-title">Auto Refresh</div>
-          <div class="hint-sub">Setiap 60 detik</div>
+    <div class="sidebar-info">
+      <div class="info-row">
+        <div class="info-label">Teknisi (unik)</div>
+        <div class="info-value" id="sidebarTeknisiCount">0</div>
+      </div>
+      <div class="info-row" style="margin-top:6px;">
+        <div class="info-label">Last Sync</div>
+        <div class="info-value" id="sidebarLastSync">-</div>
+      </div>
+    </div>
+
+    <div class="filters">
+      <h4>FILTER</h4>
+
+      <label>STO (Multi)</label>
+      <div class="multi-dropdown" id="stoDropdown">
+        <button class="multi-btn" id="stoDropdownBtn" type="button">
+          <span id="stoDropdownText">Semua STO</span>
+          <span class="chev">▾</span>
+        </button>
+
+        <div class="multi-menu" id="stoDropdownMenu">
+          <div class="multi-top">
+            <button class="mini" id="stoSelectAllBtn" type="button">Select All</button>
+            <button class="mini" id="stoClearBtn" type="button">Clear</button>
+          </div>
+          <div class="multi-list" id="stoDropdownList"></div>
         </div>
+      </div>
+
+      <label>Teknisi</label>
+      <select id="filterTeknisi">
+        <option value="">Semua Teknisi</option>
+      </select>
+
+      <label>Status</label>
+      <select id="filterStatus">
+        <option value="">Semua Status</option>
+        <option value="OPEN">OPEN</option>
+        <option value="CLOSE">CLOSE</option>
+      </select>
+
+      <div class="filter-actions">
+        <button class="btn secondary" id="exportBtn">Export CSV</button>
+        <button class="btn primary" id="resetBtn">Reset</button>
       </div>
     </div>
   </aside>
 
+  <!-- Main -->
   <main class="main">
     <header class="topbar">
-      <div>
-        <h1>Performansi Teknisi</h1>
-        <p class="subtitle">Data realtime dari Spreadsheet (API Apps Script)</p>
+      <div class="left">
+        <button class="btn icon" id="toggleSidebarBtn">☰</button>
+        <div>
+          <h1>Dashboard</h1>
+          <p>Monitoring OPEN/CLOSE • Ranking • UNSPEC Detail</p>
+        </div>
       </div>
 
-      <div class="topbar-right">
-        <div class="badge" id="badgeAPI">
-          <span class="badge-dot" id="badgeDot"></span>
-          <span id="badgeText">API: Checking...</span>
+      <div class="top-actions">
+        <button class="btn ghost" id="refreshBtn">↻ Refresh Data</button>
+        <button class="btn ghost" id="darkModeBtn">🌙 Dark</button>
+        <span class="pill live">● Live</span>
+        <span class="pill" id="topLastSyncPill">Last Sync: -</span>
+
+        <div class="profile">
+          <div class="avatar">A</div>
+          <div>
+            <div class="name">Admin</div>
+            <div class="role">Supervisor</div>
+          </div>
         </div>
-        <div class="time" id="nowTime">-</div>
       </div>
     </header>
 
-    <section class="filters card">
-      <div class="field">
-        <label>Tanggal Dari</label>
-        <input type="date" id="dateFrom" />
+    <!-- DASHBOARD -->
+    <section id="tab-dashboard" class="tab active">
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Total Tiket</div>
+          <div class="card-value" id="kpiTotal">0</div>
+          <div class="card-sub">Akumulasi tiket (filter aktif)</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">OPEN</div>
+          <div class="card-value" id="kpiOpen">0</div>
+          <div class="card-sub">Total tiket OPEN</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">CLOSE</div>
+          <div class="card-value" id="kpiClose">0</div>
+          <div class="card-sub">Total tiket CLOSE</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Progress</div>
+          <div class="card-value" id="kpiProgress">0%</div>
+          <div class="card-sub">Close / Total</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Total Teknisi</div>
+          <div class="card-value" id="kpiTeknisi">0</div>
+          <div class="card-sub">Teknisi unik</div>
+        </div>
       </div>
 
-      <div class="field">
-        <label>Tanggal Sampai</label>
-        <input type="date" id="dateTo" />
+      <div class="grid2">
+        <div class="panel">
+          <div class="panel-title">Trend Progress (%)</div>
+          <div class="panel-sub">Klik chart → pindah Tickets</div>
+          <canvas id="trendChart"></canvas>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Top 5 Teknisi (OPEN terbanyak)</div>
+          <div class="panel-sub">Klik teknisi → Teknisi Detail</div>
+          <canvas id="topOpenChart"></canvas>
+        </div>
       </div>
 
-      <div class="field">
-        <label>Filter STO</label>
-        <select id="stoFilter">
-          <option value="">Semua STO</option>
+      <div class="panel">
+        <div class="panel-title">Open vs Close per STO</div>
+        <div class="panel-sub">Klik STO → auto filter + Tickets</div>
+        <canvas id="stoChart"></canvas>
+      </div>
+    </section>
+
+    <!-- TICKETS -->
+    <section id="tab-tickets" class="tab">
+      <div class="panel">
+        <div class="panel-title">Tickets</div>
+        <div class="panel-sub">Klik tiket → detail lengkap muncul</div>
+
+        <div class="table-wrap">
+          <table class="table" id="ticketsTable">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>STO</th>
+                <th>Teknisi</th>
+                <th>No Tiket</th>
+                <th>Status</th>
+                <th>Jenis</th>
+                <th>Device</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="muted small-note" id="ticketsNote"></div>
+      </div>
+    </section>
+
+    <!-- TEAMS / RANKING -->
+    <section id="tab-teams" class="tab">
+      <div class="panel">
+        <div class="panel-title">Ranking Teknisi (Global)</div>
+        <div class="panel-sub">Klik teknisi → Teknisi Detail</div>
+
+        <div class="table-wrap">
+          <table class="table" id="rankingTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Teknisi</th>
+                <th>Total</th>
+                <th>Open</th>
+                <th>Close</th>
+                <th>Progress</th>
+                <th>UNSPEC</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:14px;">
+        <div class="panel-title">Ranking per STO</div>
+        <div class="panel-sub">Pilih STO dari dropdown → tabel akan menyesuaikan</div>
+
+        <div class="table-wrap">
+          <table class="table" id="rankingStoTable">
+            <thead>
+              <tr>
+                <th>STO</th>
+                <th>#</th>
+                <th>Teknisi</th>
+                <th>Total</th>
+                <th>Open</th>
+                <th>Close</th>
+                <th>Progress</th>
+                <th>UNSPEC</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TEKNISI DETAIL -->
+    <section id="tab-teknisi" class="tab">
+      <div class="panel">
+        <div class="panel-title">Teknisi Detail</div>
+        <div class="panel-sub">Klik teknisi dari chart/ranking → otomatis tampil</div>
+
+        <div class="tech-card">
+          <div>
+            <div class="tech-name" id="techName">-</div>
+            <div class="tech-sub" id="techSub">Pilih teknisi untuk melihat detail</div>
+          </div>
+
+          <div class="tech-kpi">
+            <div class="mini-kpi">
+              <div class="mk-label">Total</div>
+              <div class="mk-value" id="techTotal">0</div>
+            </div>
+            <div class="mini-kpi">
+              <div class="mk-label">Open</div>
+              <div class="mk-value" id="techOpen">0</div>
+            </div>
+            <div class="mini-kpi">
+              <div class="mk-label">Close</div>
+              <div class="mk-value" id="techClose">0</div>
+            </div>
+            <div class="mini-kpi">
+              <div class="mk-label">Progress</div>
+              <div class="mk-value" id="techProgress">0%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px;">
+          <div class="panel-title">Semua tiket teknisi</div>
+          <div class="panel-sub" id="techTicketNote">-</div>
+
+          <div class="table-wrap">
+            <table class="table" id="techTicketsTable">
+              <thead>
+                <tr>
+                  <th>Tanggal</th>
+                  <th>STO</th>
+                  <th>No Tiket</th>
+                  <th>Status</th>
+                  <th>Jenis</th>
+                  <th>Device</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+<!-- ADMIN PANEL -->
+<section id="tab-admin" class="tab">
+  <div class="panel">
+    <div class="panel-title">Admin Panel (UNSPEC Override)</div>
+    <div class="panel-sub">Edit teknisi/status/jenis tiket langsung → update MASTER_UNSPEC</div>
+
+    <div class="admin-grid">
+      <div class="admin-card">
+        <div class="admin-title">PIN Admin</div>
+        <input type="password" id="adminPin" placeholder="Masukkan PIN..." />
+        <div class="admin-hint">PIN ini sama dengan CONFIG.ADMIN_PIN di Apps Script</div>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-title">No Tiket</div>
+        <input type="text" id="adminNoTiket" placeholder="Contoh: INC123456..." />
+        <div class="admin-hint">Wajib diisi</div>
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-title">Teknisi Override</div>
+        <input type="text" id="adminTeknisi" placeholder="Nama teknisi (opsional)" />
+      </div>
+
+      <div class="admin-card">
+        <div class="admin-title">Status Override</div>
+        <select id="adminStatus">
+          <option value="">(kosong)</option>
+          <option value="OPEN">OPEN</option>
+          <option value="CLOSE">CLOSE</option>
         </select>
       </div>
 
-      <div class="field field-wide">
-        <label>Cari Teknisi</label>
-        <input type="text" id="searchTeknisi" placeholder="contoh: Rey Wijaya" />
+      <div class="admin-card">
+        <div class="admin-title">Jenis Override</div>
+        <input type="text" id="adminJenis" placeholder="Contoh: UNSPEC / SQM / REGULER" />
       </div>
 
-      <div class="actions">
-        <button class="btn primary" id="btnRefresh">Refresh</button>
-        <button class="btn ghost" id="btnExport">Export CSV</button>
+      <div class="admin-card">
+        <div class="admin-title">Catatan</div>
+        <input type="text" id="adminCatatan" placeholder="Alasan override (opsional)" />
       </div>
-    </section>
+    </div>
 
-    <section class="stats">
-      <div class="card stat">
-        <div class="stat-title">Total Tiket</div>
-        <div class="stat-value" id="sTotal">0</div>
-      </div>
+    <div class="admin-actions">
+      <button class="btn primary" id="adminSaveBtn">✅ Simpan Override</button>
+      <button class="btn secondary" id="adminFillFromModalBtn">📌 Ambil dari tiket terakhir</button>
+    </div>
 
-      <div class="card stat">
-        <div class="stat-title">Total OPEN</div>
-        <div class="stat-value" id="sOpen">0</div>
-      </div>
+    <div class="admin-result" id="adminResult">-</div>
+  </div>
+</section>
 
-      <div class="card stat">
-        <div class="stat-title">Total CLOSE</div>
-        <div class="stat-value" id="sClose">0</div>
-      </div>
+    <!-- REPORTS -->
+    <section id="tab-reports" class="tab">
+      <div class="panel">
+        <div class="panel-title">Reports</div>
+        <div class="panel-sub">Export & Monitoring</div>
 
-      <div class="card stat highlight">
-        <div class="stat-title">Close Ticket</div>
-        <div class="stat-value" id="sCloseTicket">0</div>
-      </div>
-    </section>
+        <div class="reports-grid">
+          <div class="report-card">
+            <div class="rc-title">Export Tickets</div>
+            <div class="rc-sub">Export sesuai filter aktif</div>
+            <button class="btn primary" id="exportTicketsBtn">Export Tickets</button>
+          </div>
 
-    <section class="grid">
-      <div class="card box">
-        <div class="box-head">
-          <h3>🏆 Top Teknisi</h3>
-          <span class="muted">Top 10</span>
+          <div class="report-card">
+            <div class="rc-title">Export Ranking Global</div>
+            <div class="rc-sub">Ranking global semua teknisi</div>
+            <button class="btn secondary" id="exportRankingBtn">Export Ranking</button>
+          </div>
         </div>
-        <div id="topList" class="top-list">
-          <div class="empty">Tidak ada data.</div>
-        </div>
-      </div>
-
-      <div class="card box">
-        <div class="box-head">
-          <h3>📈 Grafik Close Ticket</h3>
-          <span class="muted">Top 10</span>
-        </div>
-        <div class="chart-wrap">
-          <canvas id="chartClose"></canvas>
-        </div>
-      </div>
-    </section>
-
-    <section class="card table-card">
-      <div class="table-head">
-        <h3>📌 Detail Performansi</h3>
-        <span class="muted" id="dataCount">0 data</span>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Tanggal</th>
-              <th>STO</th>
-              <th>Teknisi</th>
-              <th>Total</th>
-              <th>Open</th>
-              <th>Close</th>
-              <th>Close Ticket</th>
-              <th>Aksi</th>
-            </tr>
-          </thead>
-          <tbody id="tableBody">
-            <tr><td colspan="8" class="empty-cell">Data belum dimuat...</td></tr>
-          </tbody>
-        </table>
       </div>
     </section>
   </main>
 
-  <!-- MODAL -->
-  <div class="modal" id="modal">
-    <div class="modal-box">
+  <!-- MODAL DETAIL -->
+  <div class="modal-backdrop" id="ticketModalBackdrop">
+    <div class="modal">
       <div class="modal-head">
-        <h3 id="modalTitle">Detail</h3>
-        <button class="icon-btn" id="btnCloseModal">✕</button>
+        <div>
+          <div class="modal-title" id="modalTitle">Detail Tiket</div>
+          <div class="modal-sub" id="modalSub">—</div>
+        </div>
+        <button class="btn icon" id="closeModalBtn">✕</button>
       </div>
+
       <div class="modal-body" id="modalBody"></div>
+
+      <div class="modal-foot">
+        <button class="btn secondary" id="copyTicketBtn">Copy No Tiket</button>
+        <button class="btn primary" id="closeModalBtn2">Tutup</button>
+      </div>
     </div>
   </div>
 
-  <script src="script.js"></script>
+<script src="script.js"></script>
 </body>
 </html>

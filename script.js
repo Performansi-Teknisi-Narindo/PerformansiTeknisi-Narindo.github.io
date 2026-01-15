@@ -1,334 +1,727 @@
-/******************************************************
- * ✅ FINAL SCRIPT.JS (ANTI CORS + ANTI REDIRECT)
- * Works for GitHub Pages + Google Apps Script API
- ******************************************************/
+const API_URL = "https://script.google.com/macros/s/AKfycbwcVYibyX70Fbk-YPsnbuNjlOz9vOoPUqrNXAaCVc_38PU3oFdRI_UjR-d9M8jDdNozIw/exec";
 
-const API_URL = "https://script.google.com/macros/s/AKfycbz14z3-WC9lfUMzkxqTSxcsIdsWErFDRXGBxMMhQmKbWL_Yk8XBEwvRCp3iFRooLd32/exec";
-const AUTO_REFRESH_MS = 60000;
+let ticketsData = [];
+let rankingData = [];
+let rankingStoData = [];
+let summaryData = null;
 
-let allRows = [];
-let chart = null;
+let STO_SELECTED = new Set();
+let LAST_OPENED_TICKET = null;
+let ACTIVE_TEKNISI = "";
 
-const $ = (id) => document.getElementById(id);
+let trendChart = null;
+let topOpenChart = null;
+let stoChart = null;
 
-function setTime() {
-  $("nowTime").textContent = new Date().toLocaleString("id-ID");
+document.addEventListener("DOMContentLoaded", () => {
+  initDarkMode();
+  bindMenu();
+  bindActions();
+  bindModal();
+  bindStoDropdown();
+  bindAdminPanel();
+  loadAll();
+});
+
+// ---------------- DARK MODE ----------------
+function initDarkMode(){
+  const saved = localStorage.getItem("darkMode") || "0";
+  const btn = document.getElementById("darkModeBtn");
+  if(saved === "1"){
+    document.body.classList.add("dark");
+    if(btn) btn.textContent = "☀️ Light";
+  }
 }
-
-function setApiBadge(ok) {
-  const dot = $("badgeDot");
-  const text = $("badgeText");
-  const badge = $("badgeAPI");
-
-  if (ok) {
-    dot.style.background = "#37ffb1";
-    text.textContent = "API: Connected";
-    badge.style.borderColor = "rgba(55,255,177,.35)";
-  } else {
-    dot.style.background = "#ff5b5b";
-    text.textContent = "API: Disconnected";
-    badge.style.borderColor = "rgba(255,91,91,.35)";
+function setDarkMode(on){
+  const btn = document.getElementById("darkModeBtn");
+  if(on){
+    document.body.classList.add("dark");
+    localStorage.setItem("darkMode","1");
+    if(btn) btn.textContent = "☀️ Light";
+  }else{
+    document.body.classList.remove("dark");
+    localStorage.setItem("darkMode","0");
+    if(btn) btn.textContent = "🌙 Dark";
   }
 }
 
-function fmtDate(d) {
-  const dt = new Date(d);
-  if (isNaN(dt)) return "-";
-  return dt.toLocaleDateString("id-ID");
+// ---------------- UI ----------------
+function switchTab(tabName){
+  document.querySelectorAll(".menu-item").forEach(x=>x.classList.remove("active"));
+  document.querySelector(`.menu-item[data-tab="${tabName}"]`)?.classList.add("active");
+
+  document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+  document.getElementById("tab-"+tabName)?.classList.add("active");
+
+  if(window.innerWidth <= 860){
+    document.getElementById("sidebar")?.classList.remove("show");
+  }
 }
 
-function sumOpen(r) {
-  return (r.open_sqm_reguler || 0) +
-         (r.open_reguler_hvc_gold || 0) +
-         (r.open_reguler_hvc_platinum || 0);
-}
-function sumClose(r) {
-  return (r.close_sqm_progress || 0) +
-         (r.close_sqm_close || 0) +
-         (r.close_reguler_progress || 0);
+// ---------------- MENU ----------------
+function bindMenu(){
+  document.querySelectorAll(".menu-item").forEach(btn=>{
+    btn.addEventListener("click", ()=> switchTab(btn.dataset.tab));
+  });
 }
 
-function unique(arr) {
-  return [...new Set(arr)];
+// ---------------- ACTIONS ----------------
+function bindActions(){
+  document.getElementById("refreshBtn")?.addEventListener("click", loadAll);
+
+  document.getElementById("darkModeBtn")?.addEventListener("click", ()=>{
+    const isDark = document.body.classList.contains("dark");
+    setDarkMode(!isDark);
+  });
+
+  document.getElementById("toggleSidebarBtn")?.addEventListener("click", ()=>{
+    document.getElementById("sidebar")?.classList.toggle("show");
+  });
+
+  document.getElementById("resetBtn")?.addEventListener("click", ()=>{
+    ["searchInput","filterTeknisi","filterStatus"].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.value = "";
+    });
+    STO_SELECTED.clear();
+    ACTIVE_TEKNISI = "";
+    fillFilters();
+    renderAll();
+  });
+
+  document.getElementById("exportBtn")?.addEventListener("click", exportTicketsCSV);
+  document.getElementById("exportTicketsBtn")?.addEventListener("click", exportTicketsCSV);
+  document.getElementById("exportRankingBtn")?.addEventListener("click", exportRankingCSV);
+
+  ["searchInput","filterTeknisi","filterStatus"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("input", renderAll);
+    el.addEventListener("change", renderAll);
+  });
+
+  document.getElementById("filterTeknisi")?.addEventListener("change", (e)=>{
+    const v = e.target.value || "";
+    if(v) openTeknisiDetail(v);
+  });
 }
 
-function fillSTOSelect(rows) {
-  const stoSel = $("stoFilter");
-  const current = stoSel.value;
+// Admin Panel
 
-  const stos = unique(rows.map(r => r.sto).filter(Boolean)).sort();
-  stoSel.innerHTML = `<option value="">Semua STO</option>` + stos.map(s => `<option value="${s}">${s}</option>`).join("");
+function bindAdminPanel(){
+  const saveBtn = document.getElementById("adminSaveBtn");
+  const fillBtn = document.getElementById("adminFillFromModalBtn");
 
-  stoSel.value = current || "";
+  if(saveBtn){
+    saveBtn.addEventListener("click", adminSaveOverride);
+  }
+
+  if(fillBtn){
+    fillBtn.addEventListener("click", ()=>{
+      if(!LAST_OPENED_TICKET){
+        setAdminResult("❌ Belum ada tiket yang dibuka dari modal");
+        return;
+      }
+      document.getElementById("adminNoTiket").value = LAST_OPENED_TICKET.no_tiket || "";
+      document.getElementById("adminTeknisi").value = LAST_OPENED_TICKET.teknisi || "";
+      document.getElementById("adminStatus").value = String(LAST_OPENED_TICKET.status||"").toUpperCase();
+      document.getElementById("adminJenis").value = LAST_OPENED_TICKET.jenis || "";
+      document.getElementById("adminCatatan").value = `Override via website (${new Date().toLocaleString()})`;
+      setAdminResult("✅ Form sudah terisi dari tiket terakhir");
+    });
+  }
 }
 
-function applyFilters() {
-  const from = $("dateFrom").value ? new Date($("dateFrom").value) : null;
-  const to = $("dateTo").value ? new Date($("dateTo").value) : null;
-  const sto = $("stoFilter").value.trim();
-  const q = $("searchTeknisi").value.trim().toLowerCase();
+function setAdminResult(msg){
+  const el = document.getElementById("adminResult");
+  if(el) el.textContent = msg;
+}
 
-  return allRows.filter(r => {
-    const t = new Date(r.tanggal);
+async function adminSaveOverride(){
+  const pin = document.getElementById("adminPin").value.trim();
+  const no_tiket = document.getElementById("adminNoTiket").value.trim();
 
-    if (from && t < from) return false;
+  const teknisi_override = document.getElementById("adminTeknisi").value.trim();
+  const status_override = document.getElementById("adminStatus").value.trim();
+  const jenis_override = document.getElementById("adminJenis").value.trim();
+  const catatan = document.getElementById("adminCatatan").value.trim();
 
-    if (to) {
-      const end = new Date(to);
-      end.setHours(23, 59, 59, 999);
-      if (t > end) return false;
+  if(!pin){
+    setAdminResult("❌ PIN wajib diisi");
+    return;
+  }
+  if(!no_tiket){
+    setAdminResult("❌ No Tiket wajib diisi");
+    return;
+  }
+
+  setAdminResult("⏳ Menyimpan override...");
+
+  try{
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type":"text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        action: "unspec_upsert",
+        pin,
+        no_tiket,
+        teknisi_override,
+        status_override,
+        jenis_override,
+        catatan
+      })
+    });
+
+    const json = await res.json();
+    if(!json.ok){
+      setAdminResult(json.message || "❌ Gagal simpan override");
+      return;
     }
 
-    if (sto && r.sto !== sto) return false;
-    if (q && !String(r.teknisi || "").toLowerCase().includes(q)) return false;
+    setAdminResult(json.message || "✅ Override tersimpan!");
 
+    // auto refresh setelah save
+    await loadAllSilent();
+    switchTab("tickets");
+  }catch(err){
+    console.error(err);
+    setAdminResult("❌ Error: " + String(err));
+  }
+}
+
+// ---------------- FETCH ----------------
+async function fetchJSON(url){
+  const res = await fetch(url);
+  return await res.json();
+}
+
+// ---------------- LOAD ----------------
+async function loadAll(){
+  try{
+    const [summary, tickets, ranking, rankingSto] = await Promise.all([
+      fetchJSON(`${API_URL}?action=summary`),
+      fetchJSON(`${API_URL}?action=tickets`),
+      fetchJSON(`${API_URL}?action=ranking`),
+      fetchJSON(`${API_URL}?action=ranking_sto`),
+    ]);
+
+    summaryData = summary || null;
+    ticketsData = tickets.rows || [];
+    rankingData = ranking.rows || [];
+    rankingStoData = rankingSto.rows || [];
+
+    fillFilters();
+    renderAll();
+    renderSummaryUI();
+  }catch(err){
+    console.error(err);
+    alert("Gagal load data. Pastikan API_URL benar + deploy Anyone.");
+  }
+}
+
+// silent refresh
+async function loadAllSilent(){
+  try{
+    const [summary, tickets, ranking, rankingSto] = await Promise.all([
+      fetchJSON(`${API_URL}?action=summary`),
+      fetchJSON(`${API_URL}?action=tickets`),
+      fetchJSON(`${API_URL}?action=ranking`),
+      fetchJSON(`${API_URL}?action=ranking_sto`),
+    ]);
+
+    summaryData = summary || null;
+    ticketsData = tickets.rows || [];
+    rankingData = ranking.rows || [];
+    rankingStoData = rankingSto.rows || [];
+
+    fillFilters();
+    renderAll();
+    renderSummaryUI();
+  }catch(err){
+    console.error("silent refresh gagal:", err);
+  }
+}
+
+// ---------------- SUMMARY UI ----------------
+function renderSummaryUI(){
+  const last = (summaryData && summaryData.last_sync) ? summaryData.last_sync : "-";
+  document.getElementById("sidebarLastSync").textContent = last;
+  document.getElementById("topLastSyncPill").textContent = `Last Sync: ${last}`;
+}
+
+// ---------------- STO DROPDOWN ----------------
+function bindStoDropdown(){
+  const btn = document.getElementById("stoDropdownBtn");
+  const menu = document.getElementById("stoDropdownMenu");
+  const list = document.getElementById("stoDropdownList");
+  if(!btn || !menu || !list) return;
+
+  btn.addEventListener("click", ()=> menu.classList.toggle("show"));
+
+  document.addEventListener("click", (e)=>{
+    const root = document.getElementById("stoDropdown");
+    if(root && !root.contains(e.target)) menu.classList.remove("show");
+  });
+
+  list.addEventListener("change", (e)=>{
+    if(e.target.matches("input[type='checkbox']")){
+      const val = String(e.target.value||"").trim().toUpperCase();
+      if(e.target.checked) STO_SELECTED.add(val);
+      else STO_SELECTED.delete(val);
+      updateStoDropdownText_();
+      renderAll();
+    }
+  });
+
+  document.getElementById("stoSelectAllBtn")?.addEventListener("click", ()=>{
+    list.querySelectorAll("input[type='checkbox']").forEach(c=>{
+      c.checked = true;
+      STO_SELECTED.add(String(c.value).trim().toUpperCase());
+    });
+    updateStoDropdownText_();
+    renderAll();
+  });
+
+  document.getElementById("stoClearBtn")?.addEventListener("click", ()=>{
+    list.querySelectorAll("input[type='checkbox']").forEach(c=>c.checked=false);
+    STO_SELECTED.clear();
+    updateStoDropdownText_();
+    renderAll();
+  });
+}
+
+function updateStoDropdownText_(){
+  const text = document.getElementById("stoDropdownText");
+  const selected = [...STO_SELECTED];
+  if(selected.length===0) text.textContent = "Semua STO";
+  else if(selected.length===1) text.textContent = selected[0];
+  else text.textContent = `${selected.length} STO dipilih`;
+}
+
+function fillFilters(){
+  // teknisi dropdown
+  const tekSet = new Set(ticketsData.map(x=>String(x.teknisi||"").trim()).filter(Boolean));
+  const tekSel = document.getElementById("filterTeknisi");
+  if(tekSel){
+    const cur = tekSel.value || "";
+    tekSel.innerHTML = `<option value="">Semua Teknisi</option>` +
+      [...tekSet].sort().map(v=>`<option value="${v}">${v}</option>`).join("");
+    if(cur) tekSel.value = cur;
+  }
+
+  // sto checklist
+  const stoSet = new Set(ticketsData.map(x=>String(x.sto||"").trim()).filter(Boolean));
+  const stos = [...stoSet].sort();
+  const list = document.getElementById("stoDropdownList");
+  if(list){
+    list.innerHTML = stos.map(sto=>{
+      const val = sto.toUpperCase();
+      const checked = STO_SELECTED.has(val) ? "checked" : "";
+      return `<label class="multi-item">
+        <input type="checkbox" value="${val}" ${checked}/>
+        <span>${sto}</span>
+      </label>`;
+    }).join("");
+  }
+
+  updateStoDropdownText_();
+}
+
+// ---------------- FILTER ----------------
+function getFilteredTickets(){
+  const q = (document.getElementById("searchInput")?.value || "").toLowerCase();
+  const teknisi = document.getElementById("filterTeknisi")?.value || "";
+  const status = document.getElementById("filterStatus")?.value || "";
+  const stoSelected = [...STO_SELECTED];
+  const stoActive = stoSelected.length > 0;
+
+  return ticketsData.filter(t=>{
+    const sto = String(t.sto||"").trim().toUpperCase();
+    if(stoActive && !stoSelected.includes(sto)) return false;
+    if(teknisi && String(t.teknisi||"").trim() !== teknisi) return false;
+    if(status && String(t.status||"").trim().toUpperCase() !== status) return false;
+    if(q){
+      const s = JSON.stringify(t).toLowerCase();
+      if(!s.includes(q)) return false;
+    }
     return true;
   });
 }
 
-function renderStats(rows) {
-  const total = rows.reduce((a, r) => a + (r.total_tiket || 0), 0);
-  const open = rows.reduce((a, r) => a + sumOpen(r), 0);
-  const close = rows.reduce((a, r) => a + sumClose(r), 0);
-  const closeTicket = rows.reduce((a, r) => a + (r.close_tiket || 0), 0);
+// ---------------- RENDER ALL ----------------
+function renderAll(){
+  const filtered = getFilteredTickets();
+  renderKPI(filtered);
+  renderTickets(filtered);
+  renderRankingGlobal();
+  renderRankingSto();
+  renderCharts(filtered);
 
-  $("sTotal").textContent = total;
-  $("sOpen").textContent = open;
-  $("sClose").textContent = close;
-  $("sCloseTicket").textContent = closeTicket;
-}
-
-function renderTop(rows) {
-  const map = {};
-  rows.forEach(r => {
-    const name = r.teknisi || "TANPA TEKNISI";
-    map[name] = (map[name] || 0) + (r.close_tiket || 0);
-  });
-
-  const top = Object.entries(map).sort((a,b) => b[1] - a[1]).slice(0, 10);
-
-  const target = $("topList");
-  if (top.length === 0) {
-    target.innerHTML = `<div class="empty">Tidak ada data.</div>`;
-    return;
+  // jika tab teknisi aktif, update
+  const tabTek = document.getElementById("tab-teknisi");
+  if(tabTek && tabTek.classList.contains("active")){
+    renderTeknisiDetail();
   }
-
-  target.innerHTML = top.map(([name, val], i) => `
-    <div class="top-item">
-      <div>
-        <div class="top-name">${i+1}. ${name}</div>
-        <div class="top-meta">Close Ticket: ${val}</div>
-      </div>
-      <span class="pill">#${i+1}</span>
-    </div>
-  `).join("");
 }
 
-function renderChart(rows) {
-  const map = {};
-  rows.forEach(r => {
-    const name = r.teknisi || "TANPA TEKNISI";
-    map[name] = (map[name] || 0) + (r.close_tiket || 0);
+function renderKPI(rows){
+  const total = rows.length;
+  const open = rows.filter(x=>String(x.status).toUpperCase()==="OPEN").length;
+  const close = rows.filter(x=>String(x.status).toUpperCase()==="CLOSE").length;
+  const progress = total ? Math.round((close/total)*100) : 0;
+  const teknisiCount = new Set(rows.map(x=>String(x.teknisi||"").trim()).filter(Boolean)).size;
+
+  document.getElementById("kpiTotal").textContent = total;
+  document.getElementById("kpiOpen").textContent = open;
+  document.getElementById("kpiClose").textContent = close;
+  document.getElementById("kpiProgress").textContent = progress + "%";
+  document.getElementById("kpiTeknisi").textContent = teknisiCount;
+  document.getElementById("sidebarTeknisiCount").textContent = teknisiCount;
+}
+
+// ---------------- TABLES ----------------
+function renderTickets(rows){
+  const tbody = document.querySelector("#ticketsTable tbody");
+  if(!tbody) return;
+
+  const limit = 500;
+  const sliced = rows.slice(0, limit);
+
+  tbody.innerHTML = sliced.map((r, idx)=>`
+    <tr data-idx="${idx}">
+      <td>${r.tanggal||""}</td>
+      <td>${r.sto||""}</td>
+      <td>${r.teknisi||""}</td>
+      <td><b>${r.no_tiket||""}</b></td>
+      <td>${r.status||""}</td>
+      <td>${r.jenis||""}</td>
+      <td>${r.device||""}</td>
+    </tr>
+  `).join("");
+
+  tbody.querySelectorAll("tr").forEach(tr=>{
+    tr.addEventListener("click", ()=>{
+      openTicketModal(sliced[Number(tr.dataset.idx)]);
+    });
   });
 
-  const top = Object.entries(map).sort((a,b) => b[1] - a[1]).slice(0,10);
-  const labels = top.map(x => x[0]);
-  const data = top.map(x => x[1]);
+  const note = document.getElementById("ticketsNote");
+  if(note){
+    note.textContent = rows.length > limit
+      ? `Menampilkan ${limit} dari ${rows.length} tiket.`
+      : `Menampilkan ${rows.length} tiket.`;
+  }
+}
 
-  const ctx = document.getElementById("chartClose");
-  if (chart) chart.destroy();
+function renderRankingGlobal(){
+  const tbody = document.querySelector("#rankingTable tbody");
+  if(!tbody) return;
 
-  chart = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [{ label: "Close Ticket", data }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { labels: { color: "rgba(234,240,255,.65)" } }
-      },
-      scales: {
-        x: { ticks: { color: "rgba(234,240,255,.65)" }, grid: { color: "rgba(255,255,255,.06)" } },
-        y: { ticks: { color: "rgba(234,240,255,.65)" }, grid: { color: "rgba(255,255,255,.06)" } }
+  tbody.innerHTML = rankingData.slice(0,50).map(r=>`
+    <tr data-teknisi="${r.teknisi}">
+      <td>${r.rank}</td>
+      <td><b>${r.teknisi}</b></td>
+      <td>${r.total}</td>
+      <td>${r.open}</td>
+      <td>${r.close}</td>
+      <td>${r.progress}</td>
+      <td>${r.unspec}</td>
+    </tr>
+  `).join("");
+
+  tbody.querySelectorAll("tr").forEach(tr=>{
+    tr.addEventListener("click", ()=> openTeknisiDetail(tr.dataset.teknisi));
+  });
+}
+
+function renderRankingSto(){
+  const tbody = document.querySelector("#rankingStoTable tbody");
+  if(!tbody) return;
+
+  // tampilkan semua ranking per STO (ikut filter STO kalau selected)
+  const stoSelected = [...STO_SELECTED];
+  const stoActive = stoSelected.length > 0;
+
+  const rows = stoActive
+    ? rankingStoData.filter(r=>stoSelected.includes(String(r.sto||"").toUpperCase()))
+    : rankingStoData;
+
+  tbody.innerHTML = rows.slice(0,200).map(r=>`
+    <tr data-teknisi="${r.teknisi}">
+      <td>${r.sto}</td>
+      <td>${r.rank}</td>
+      <td><b>${r.teknisi}</b></td>
+      <td>${r.total}</td>
+      <td>${r.open}</td>
+      <td>${r.close}</td>
+      <td>${r.progress}</td>
+      <td>${r.unspec}</td>
+    </tr>
+  `).join("");
+
+  tbody.querySelectorAll("tr").forEach(tr=>{
+    tr.addEventListener("click", ()=> openTeknisiDetail(tr.dataset.teknisi));
+  });
+}
+
+// ---------------- CHARTS ----------------
+function renderCharts(rows){
+  // trend progress by tanggal
+  const byDate = {};
+  rows.forEach(t=>{
+    const d = String(t.tanggal||"UNKNOWN").trim();
+    if(!byDate[d]) byDate[d] = { total:0, close:0 };
+    byDate[d].total++;
+    if(String(t.status).toUpperCase()==="CLOSE") byDate[d].close++;
+  });
+
+  const dates = Object.keys(byDate).sort();
+  const trend = dates.map(d=>{
+    const x = byDate[d];
+    return x.total ? Math.round((x.close/x.total)*100) : 0;
+  });
+
+  // top open
+  const openByTek = {};
+  rows.forEach(t=>{
+    const tek = String(t.teknisi||"UNKNOWN").trim();
+    if(!openByTek[tek]) openByTek[tek]=0;
+    if(String(t.status).toUpperCase()==="OPEN") openByTek[tek]++;
+  });
+  const topOpen = Object.entries(openByTek).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  // sto open close
+  const stoMap = {};
+  rows.forEach(t=>{
+    const sto = String(t.sto||"UNKNOWN").trim().toUpperCase();
+    if(!stoMap[sto]) stoMap[sto] = { open:0, close:0 };
+    if(String(t.status).toUpperCase()==="CLOSE") stoMap[sto].close++;
+    else stoMap[sto].open++;
+  });
+
+  const stoLabels = Object.keys(stoMap).sort();
+  const stoOpen = stoLabels.map(s=>stoMap[s].open);
+  const stoClose = stoLabels.map(s=>stoMap[s].close);
+
+  buildTrendChart(dates, trend);
+  buildTopOpenChart(topOpen.map(x=>x[0]), topOpen.map(x=>x[1]));
+  buildStoChart(stoLabels, stoOpen, stoClose);
+}
+
+function buildTrendChart(labels, data){
+  const ctx = document.getElementById("trendChart");
+  if(!ctx) return;
+  if(trendChart) trendChart.destroy();
+
+  trendChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets:[{ label:"Progress (%)", data }] },
+    options:{ responsive:true, onClick: ()=> switchTab("tickets") }
+  });
+}
+
+function buildTopOpenChart(labels, data){
+  const ctx = document.getElementById("topOpenChart");
+  if(!ctx) return;
+  if(topOpenChart) topOpenChart.destroy();
+
+  topOpenChart = new Chart(ctx, {
+    type:"bar",
+    data:{ labels, datasets:[{ label:"OPEN", data }]},
+    options:{
+      indexAxis:"y",
+      responsive:true,
+      onClick: (_e, els)=>{
+        if(!els.length) return;
+        openTeknisiDetail(labels[els[0].index]);
       }
     }
   });
 }
 
-function openModal(row) {
-  $("modal").classList.add("open");
-  $("modalTitle").textContent = `Detail - ${row.teknisi || "TANPA TEKNISI"}`;
+function buildStoChart(labels, openData, closeData){
+  const ctx = document.getElementById("stoChart");
+  if(!ctx) return;
+  if(stoChart) stoChart.destroy();
 
-  $("modalBody").innerHTML = `
-    <div style="display:grid; gap:10px;">
-      <div><b>Tanggal:</b> ${fmtDate(row.tanggal)}</div>
-      <div><b>STO:</b> ${row.sto || "-"}</div>
-      <div><b>Total Tiket:</b> ${row.total_tiket || 0}</div>
-      <hr style="border-color: rgba(255,255,255,.08); width:100%;" />
-      <div><b>OPEN SQM REGULER:</b> ${row.open_sqm_reguler || 0}</div>
-      <div><b>OPEN REGULER GOLD:</b> ${row.open_reguler_hvc_gold || 0}</div>
-      <div><b>OPEN REGULER PLATINUM:</b> ${row.open_reguler_hvc_platinum || 0}</div>
-      <hr style="border-color: rgba(255,255,255,.08); width:100%;" />
-      <div><b>CLOSE SQM PROGRESS:</b> ${row.close_sqm_progress || 0}</div>
-      <div><b>CLOSE SQM CLOSE:</b> ${row.close_sqm_close || 0}</div>
-      <div><b>CLOSE REGULER PROGRESS:</b> ${row.close_reguler_progress || 0}</div>
-      <hr style="border-color: rgba(255,255,255,.08); width:100%;" />
-      <div><b>Close Ticket:</b> ${row.close_tiket || 0}</div>
-    </div>
-  `;
+  stoChart = new Chart(ctx, {
+    type:"bar",
+    data:{ labels, datasets:[
+      { label:"OPEN", data: openData },
+      { label:"CLOSE", data: closeData }
+    ]},
+    options:{
+      responsive:true,
+      onClick: (_e, els)=>{
+        if(!els.length) return;
+        const sto = String(labels[els[0].index]||"").trim().toUpperCase();
+        STO_SELECTED.clear();
+        if(sto && sto!=="UNKNOWN") STO_SELECTED.add(sto);
+        fillFilters();
+        renderAll();
+        switchTab("tickets");
+      }
+    }
+  });
 }
 
-function closeModal() {
-  $("modal").classList.remove("open");
+// ---------------- TEKNISI DETAIL ----------------
+function openTeknisiDetail(teknisiName){
+  ACTIVE_TEKNISI = String(teknisiName||"").trim();
+  if(!ACTIVE_TEKNISI) return;
+
+  const tekSel = document.getElementById("filterTeknisi");
+  if(tekSel) tekSel.value = ACTIVE_TEKNISI;
+
+  switchTab("teknisi");
+  renderTeknisiDetail();
 }
 
-function renderTable(rows) {
-  $("dataCount").textContent = `${rows.length} data`;
-
-  const tb = $("tableBody");
-  if (rows.length === 0) {
-    tb.innerHTML = `<tr><td colspan="8" class="empty-cell">Data tidak ditemukan.</td></tr>`;
+function renderTeknisiDetail(){
+  const nameEl = document.getElementById("techName");
+  const subEl = document.getElementById("techSub");
+  if(!ACTIVE_TEKNISI){
+    if(nameEl) nameEl.textContent = "-";
+    if(subEl) subEl.textContent = "Pilih teknisi untuk melihat detail";
     return;
   }
 
-  tb.innerHTML = rows.map((r, i) => `
-    <tr>
-      <td>${fmtDate(r.tanggal)}</td>
-      <td>${r.sto || "-"}</td>
-      <td><span class="pill">${r.teknisi || "TANPA TEKNISI"}</span></td>
-      <td>${r.total_tiket || 0}</td>
-      <td>${sumOpen(r)}</td>
-      <td>${sumClose(r)}</td>
-      <td>${r.close_tiket || 0}</td>
-      <td><button class="small-btn" data-i="${i}">Detail</button></td>
+  const rows = getFilteredTickets().filter(t => String(t.teknisi||"").trim() === ACTIVE_TEKNISI);
+
+  const total = rows.length;
+  const open = rows.filter(x=>String(x.status).toUpperCase()==="OPEN").length;
+  const close = rows.filter(x=>String(x.status).toUpperCase()==="CLOSE").length;
+  const progress = total ? Math.round((close/total)*100) : 0;
+
+  nameEl.textContent = ACTIVE_TEKNISI;
+  subEl.textContent = "Mengikuti filter aktif (STO/status/search)";
+
+  document.getElementById("techTotal").textContent = total;
+  document.getElementById("techOpen").textContent = open;
+  document.getElementById("techClose").textContent = close;
+  document.getElementById("techProgress").textContent = progress + "%";
+
+  const tbody = document.querySelector("#techTicketsTable tbody");
+  if(!tbody) return;
+
+  const limit = 300;
+  const sliced = rows.slice(0, limit);
+
+  tbody.innerHTML = sliced.map((r, idx)=>`
+    <tr data-idx="${idx}">
+      <td>${r.tanggal||""}</td>
+      <td>${r.sto||""}</td>
+      <td><b>${r.no_tiket||""}</b></td>
+      <td>${r.status||""}</td>
+      <td>${r.jenis||""}</td>
+      <td>${r.device||""}</td>
     </tr>
   `).join("");
 
-  tb.querySelectorAll("button[data-i]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      openModal(rows[Number(btn.dataset.i)]);
-    });
+  tbody.querySelectorAll("tr").forEach(tr=>{
+    tr.addEventListener("click", ()=> openTicketModal(sliced[Number(tr.dataset.idx)]));
+  });
+
+  const note = document.getElementById("techTicketNote");
+  if(note){
+    note.textContent = rows.length > limit
+      ? `Menampilkan ${limit} dari ${rows.length} tiket teknisi ini.`
+      : `Menampilkan ${rows.length} tiket teknisi ini.`;
+  }
+}
+
+// ---------------- MODAL ----------------
+function bindModal(){
+  const backdrop = document.getElementById("ticketModalBackdrop");
+  const close1 = document.getElementById("closeModalBtn");
+  const close2 = document.getElementById("closeModalBtn2");
+  const copyBtn = document.getElementById("copyTicketBtn");
+
+  backdrop.addEventListener("click", (e)=>{
+    if(e.target === backdrop) closeTicketModal();
+  });
+  close1.addEventListener("click", closeTicketModal);
+  close2.addEventListener("click", closeTicketModal);
+
+  copyBtn.addEventListener("click", ()=>{
+    const t = copyBtn.dataset.ticket || "";
+    if(!t) return;
+    navigator.clipboard.writeText(t);
+    copyBtn.textContent = "✅ Copied!";
+    setTimeout(()=>copyBtn.textContent="Copy No Tiket", 900);
+  });
+
+  document.addEventListener("keydown", (e)=>{
+    if(e.key==="Escape") closeTicketModal();
   });
 }
 
-function exportCSV(rows) {
-  const header = [
-    "tanggal","sto","teknisi","total_tiket",
-    "open_sqm_reguler","open_reguler_hvc_gold","open_reguler_hvc_platinum",
-    "close_sqm_progress","close_sqm_close","close_reguler_progress",
-    "close_tiket"
-  ];
-  const lines = [header.join(",")];
+function  openTicketModal(ticket){
+    LAST_OPENED_TICKET = ticket;
+  if(!ticket) return;
+  document.getElementById("modalTitle").textContent = ticket.no_tiket || "Detail Tiket";
+  document.getElementById("modalSub").textContent = `${ticket.tanggal||""} • ${ticket.sto||""} • ${ticket.teknisi||""}`;
 
-  rows.forEach(r => {
-    const line = header.map(k => {
-      let v = r[k];
-      if (v === null || v === undefined) v = "";
-      const s = String(v).replace(/"/g,'""');
-      return `"${s}"`;
-    }).join(",");
-    lines.push(line);
-  });
+  const kv = (k,v)=>`
+    <div class="kv">
+      <div class="k">${k}</div>
+      <div class="v">${v || "-"}</div>
+    </div>
+  `;
 
-  const blob = new Blob([lines.join("\n")], { type:"text/csv;charset=utf-8" });
+  document.getElementById("modalBody").innerHTML = `
+    ${kv("Status", ticket.status)}
+    ${kv("Jenis", ticket.jenis)}
+    ${kv("Device", ticket.device)}
+    ${kv("Keterangan", ticket.ket)}
+    ${kv("No Tiket", ticket.no_tiket)}
+    ${kv("STO", ticket.sto)}
+    ${kv("Teknisi", ticket.teknisi)}
+  `;
+
+  const copyBtn = document.getElementById("copyTicketBtn");
+  copyBtn.dataset.ticket = ticket.no_tiket || "";
+
+  document.getElementById("ticketModalBackdrop").classList.add("show");
+}
+
+function closeTicketModal(){
+  document.getElementById("ticketModalBackdrop").classList.remove("show");
+}
+
+// ---------------- EXPORT ----------------
+function exportTicketsCSV(){
+  const rows = getFilteredTickets();
+  const header = ["tanggal","sto","teknisi","no_tiket","status","jenis","device","ket"];
+  downloadCSV_("tickets_export.csv", header, rows);
+}
+
+function exportRankingCSV(){
+  const rows = rankingData.map(r=>({
+    rank:r.rank, teknisi:r.teknisi, total:r.total, open:r.open, close:r.close, progress:r.progress, unspec:r.unspec
+  }));
+  const header = ["rank","teknisi","total","open","close","progress","unspec"];
+  downloadCSV_("ranking_export.csv", header, rows);
+}
+
+function downloadCSV_(filename, header, rows){
+  const csv = [
+    header.join(","),
+    ...rows.map(r => header.map(k => `"${String(r[k]||"").replace(/"/g,'""')}"`).join(","))
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
+
   const a = document.createElement("a");
   a.href = url;
-  a.download = "performansi_teknisi.csv";
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-// ✅ 1) Normal fetch (kadang gagal karena redirect/cors)
-async function fetchJSON() {
-  const url = API_URL + (API_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  return res.json();
-}
-
-// ✅ 2) JSONP fallback (100% aman buat GitHub Pages)
-function fetchJSONP() {
-  return new Promise((resolve, reject) => {
-    const cb = "jsonp_cb_" + Date.now() + "_" + Math.floor(Math.random() * 9999);
-
-    window[cb] = (data) => {
-      delete window[cb];
-      script.remove();
-      resolve(data);
-    };
-
-    const script = document.createElement("script");
-    script.src = API_URL + (API_URL.includes("?") ? "&" : "?") + "callback=" + cb + "&t=" + Date.now();
-    script.onerror = () => {
-      delete window[cb];
-      script.remove();
-      reject(new Error("JSONP failed"));
-    };
-
-    document.body.appendChild(script);
-  });
-}
-
-async function fetchAPI() {
-  try {
-    // coba fetch biasa dulu
-    const data = await fetchJSON();
-    allRows = data.rows || [];
-    setApiBadge(true);
-
-    fillSTOSelect(allRows);
-    renderAll();
-  } catch (err1) {
-    console.warn("Fetch normal gagal, mencoba JSONP...", err1);
-    try {
-      const data = await fetchJSONP();
-      allRows = data.rows || [];
-      setApiBadge(true);
-
-      fillSTOSelect(allRows);
-      renderAll();
-    } catch (err2) {
-      console.error("Fetch JSONP juga gagal:", err2);
-      setApiBadge(false);
-    }
-  }
-}
-
-function renderAll() {
-  const filtered = applyFilters();
-  renderStats(filtered);
-  renderTop(filtered);
-  renderChart(filtered);
-  renderTable(filtered);
-}
-
-function initEvents() {
-  $("btnRefresh").addEventListener("click", fetchAPI);
-  $("btnReload").addEventListener("click", () => location.reload());
-  $("btnExport").addEventListener("click", () => exportCSV(applyFilters()));
-
-  $("stoFilter").addEventListener("change", renderAll);
-  $("searchTeknisi").addEventListener("input", renderAll);
-  $("dateFrom").addEventListener("change", renderAll);
-  $("dateTo").addEventListener("change", renderAll);
-
-  $("btnCloseModal").addEventListener("click", closeModal);
-  $("modal").addEventListener("click", (e) => {
-    if (e.target.id === "modal") closeModal();
-  });
-}
-
-function boot() {
-  setTime();
-  setInterval(setTime, 1000);
-
-  initEvents();
-  fetchAPI();
-  setInterval(fetchAPI, AUTO_REFRESH_MS);
-}
-
-boot();
+// ---------------- AUTO REFRESH 5 MIN ----------------
+setInterval(() => {
+  console.log("🔄 Auto Refresh PRO MAX (5 menit)...");
+  loadAllSilent();
+}, 5 * 60 * 1000);
